@@ -1,0 +1,27 @@
+# API
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+python-dotenv
+
+# Auth (JWT + password hashing)
+python-jose[cryptography]
+pwdlib[argon2]
+email-validator
+
+# Database (PostgreSQL)
+sqlalchemy
+psycopg[binary]
+asyncpg
+alembic
+
+# AI: LangGraph + Groq
+langgraph
+langchain-core
+langchain-groq
+
+# Document extraction (PDF + email)
+pdfplumber
+pypdf
