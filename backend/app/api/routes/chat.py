@@ -5,6 +5,7 @@ import shutil
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocketDisconnect
 from pathlib import Path
+from pydantic import BaseModel
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -16,6 +17,8 @@ from schemas.rca import ChatRequest, ChatResponse
 from services.extraction import extract_email_text, extract_pdf_text
 from services.forms import load_form_fields
 from fastapi import WebSocket
+from openai import AsyncOpenAI
+from core.config import settings
 import os
 from dotenv import load_dotenv
 
@@ -111,6 +114,7 @@ async def websocket_endpoint(websocket:WebSocket,session = Depends(get_db)):
 
             # 1. Save the user's message
             try:
+
                 result = await session.execute(
                     insert(chatMessages).values(
                         queryMessages = message,

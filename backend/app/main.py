@@ -14,15 +14,6 @@ from api.routes.auth import sign_up
 import uvicorn
 from db.database import async_session_local
 
-
-
-#    username: Mapped[str] = mapped_column(String(50), unique=True)
-#    email : Mapped[str] = mapped_column(String(50),nullable = False, unique=True)
-#    hashed_password: Mapped[str] = mapped_column(String(255))
-#    role: Mapped[str] = mapped_column(String(20))  # e.g., admin, investigator, reviewer
-#    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-#    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
 from sqlalchemy import select, insert
 
 async def intialize_base_queries(

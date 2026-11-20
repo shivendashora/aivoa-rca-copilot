@@ -6,6 +6,7 @@ import { applyAiUpdate } from '../../features/rca/rcaSlice'
 import CommonButton from '../common/common-button'
 import { cn } from '../../lib/cn'
 import { tokenStorage } from '../../lib/tokenStorage'
+import { refreshAccessToken } from '../../api/client'
 import useAPICaller from '../common/hooks/useCallApi'
 import {
   getAllChatsRequest,
@@ -170,22 +171,12 @@ export default function CopilotPanel() {
   }, [messages.length, waiting])
 
   useEffect(() => {
-    const token = tokenStorage.getAccessToken()
-    if (!token) return
-
-    // Browsers can't set headers on a WebSocket, so the token goes in the query string
-    const socket = new WebSocket(
-      `ws://127.0.0.1:8000/api/chat/ws?access_token=${encodeURIComponent(token)}`
-    )
-
-    wsref.current = socket
-
-    socket.onopen = () => {
-      setStatus('connected')
-    }
+    let stopped = false // set on unmount: stop reconnecting
+    let attempt = 0
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
 
     // One answer per message sent: the copilot's reply (with the updated form), or an error
-    socket.onmessage = (e: MessageEvent) => {
+    const onMessage = (e: MessageEvent) => {
       const id = pendingIds.current.shift()
       setWaiting(pendingIds.current.length)
 
@@ -206,28 +197,62 @@ export default function CopilotPanel() {
       else appendMessage({ role: 'ai', text: `⚠ ${msg.detail}` })
     }
 
-    socket.onclose = () => {
-      // Ignore close events from a stale socket that was already replaced
-      if (wsref.current === socket) {
-        setStatus('Disconnected')
+    const connect = async (freshToken: boolean) => {
+      let token = tokenStorage.getAccessToken()
+      if (freshToken) {
+        try {
+          token = await refreshAccessToken()
+        } catch {
+          // Refresh token expired too: the user has to log in again
+          if (!stopped) setStatus('error')
+          return
+        }
+      }
+      if (stopped || !token) return
+
+      // Browsers can't set headers on a WebSocket, so the token goes in the query string
+      const socket = new WebSocket(
+        `ws://127.0.0.1:8000/api/chat/ws?access_token=${encodeURIComponent(token)}`
+      )
+      wsref.current = socket
+      setStatus('connecting')
+
+      socket.onopen = () => {
+        attempt = 0
+        setStatus('connected')
+      }
+      socket.onmessage = onMessage
+      socket.onclose = (e: CloseEvent) => {
+        // Ignore close events from a stale socket that was already replaced
+        if (wsref.current !== socket || stopped) return
         wsref.current = null
         // Answers to messages still in flight will never arrive
         pendingIds.current = []
         setWaiting(0)
+        setStatus('Disconnected')
+
+        // The backend restarted or the network dropped: try again, waiting 1s, 2s, 4s... up to 10s.
+        // 1008 means the server rejected the token (expired after 10 minutes): get a fresh one first.
+        const delay = Math.min(1000 * 2 ** attempt, 10000)
+        attempt += 1
+        retryTimer = setTimeout(() => connect(e.code === 1008), delay)
       }
-    }
-    socket.onerror = () => {
-      if (wsref.current === socket) {
-        setStatus('error')
+      socket.onerror = () => {
+        // A close event always follows, which schedules the retry
+        if (wsref.current === socket) setStatus('Disconnected')
       }
     }
 
+    connect(false)
+
     return () => {
-      // Detach handlers so this socket can't touch state after cleanup
-      socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null
-      socket.close()
-      if (wsref.current === socket) {
-        setStatus('Disconnected')
+      stopped = true
+      clearTimeout(retryTimer)
+      const socket = wsref.current
+      if (socket) {
+        // Detach handlers so this socket can't touch state after cleanup
+        socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null
+        socket.close()
         wsref.current = null
       }
     }
@@ -333,8 +358,11 @@ export default function CopilotPanel() {
             <Send size={14} />
           </CommonButton>
         </div>
-        {(status === 'Disconnected' || status === 'error') && (
-          <p className="pt-2 text-center text-[11px] text-red-600">Not connected to the chat server. Messages can't be sent.</p>
+        {status === 'Disconnected' && (
+          <p className="pt-2 text-center text-[11px] text-amber-600">Connection lost. Reconnecting…</p>
+        )}
+        {status === 'error' && (
+          <p className="pt-2 text-center text-[11px] text-red-600">Your session has expired. Please log in again.</p>
         )}
         <p className="pt-2 pb-1 text-center text-[9px] font-medium tracking-[0.1em] text-muted-2 uppercase">
           Powered by LangGraph

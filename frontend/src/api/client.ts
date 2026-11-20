@@ -11,7 +11,8 @@ interface RefreshResponse {
 // One refresh at a time: if several requests get a 401 together, they all wait for the same refresh
 let refreshInFlight: Promise<string> | null = null
 
-const refreshAccessToken = (): Promise<string> => {
+/** Gets a new access token using the refresh-token cookie. Also used by the chat WebSocket. */
+export const refreshAccessToken = (): Promise<string> => {
   if (!refreshInFlight) {
     // No body: the browser sends the httpOnly refresh-token cookie itself.
     // Plain axios, not `api`, so a failed refresh can't trigger another refresh.
