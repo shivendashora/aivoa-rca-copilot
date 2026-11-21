@@ -16,6 +16,7 @@ from db.database import get_db
 from schemas.rca import ChatRequest, ChatResponse
 from services.extraction import extract_email_text, extract_pdf_text
 from services.forms import load_form_fields
+from services.form_values import load_values, save_values
 from fastapi import WebSocket
 from openai import AsyncOpenAI
 from core.config import settings
@@ -68,21 +69,34 @@ async def run_copilot(state: dict) -> dict:
     }
 
 
-def parse_client_message(raw: str) -> tuple[str, int | None, dict]:
-    """The client sends {"message", "form_id", "current_form"} as JSON. Plain text is accepted too."""
+async def fill_form_from_db(session, user_id: int, form_id: int | None, state: dict) -> dict:
+    """
+    Loads the user's saved values for the form, runs the copilot on them, and saves the fields it changed.
+    The database is the source of truth, so the browser only sends the message and the form id.
+    The caller commits.
+    """
+    if not form_id:
+        return await run_copilot({**state, "form": {}, "fields": []})
+
+    field_defs = await load_form_fields(session, form_id)
+    current = await load_values(session, user_id, form_id)
+    out = await run_copilot({**state, "form": current, "fields": field_defs})
+
+    changed = {name: out["form"][name] for name in out["changed_fields"] if name in out["form"]}
+    await save_values(session, user_id, form_id, changed, field_defs)
+    return out
+
+
+def parse_client_message(raw: str) -> tuple[str, int | None]:
+    """The client sends {"message", "form_id"} as JSON. Plain text is accepted too."""
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        return raw, None, {}
+        return raw, None
     if not isinstance(payload, dict):
-        return raw, None, {}
+        return raw, None
     form_id = payload.get("form_id")
-    current_form = payload.get("current_form")
-    return (
-        str(payload.get("message") or ""),
-        form_id if isinstance(form_id, int) else None,
-        current_form if isinstance(current_form, dict) else {},
-    )
+    return str(payload.get("message") or ""), form_id if isinstance(form_id, int) else None
 
 
 @router.websocket("/ws")
@@ -107,7 +121,7 @@ async def websocket_endpoint(websocket:WebSocket,session = Depends(get_db)):
     try:
         while True:
             raw = await websocket.receive_text()
-            message, form_id, current_form = parse_client_message(raw)
+            message, form_id = parse_client_message(raw)
             if not message.strip():
                 await websocket.send_json({"type": "error", "saved": False, "detail": "Empty message"})
                 continue
@@ -131,10 +145,9 @@ async def websocket_endpoint(websocket:WebSocket,session = Depends(get_db)):
                 await websocket.send_json({"type": "error", "saved": False, "detail": "Message could not be saved"})
                 continue
 
-            # 2. Ask the copilot to fill the form, then save its reply on the same row
+            # 2. Fill the saved form with the copilot, then save the changed fields and its reply together
             try:
-                fields = await load_form_fields(session, form_id) if form_id else []
-                out = await run_copilot({"user_message": message, "form": current_form, "fields": fields})
+                out = await fill_form_from_db(session, userId, form_id, {"user_message": message})
                 await session.execute(
                     update(chatMessages).where(chatMessages.id == chat_id).values(agentResponse = out["reply"])
                 )
@@ -182,10 +195,11 @@ async def getChats(session = Depends(get_db),user = Depends(current_user)):
         )
 
 @router.post("", response_model=ChatResponse)
-async def chat(req: ChatRequest, session = Depends(get_db), _user = Depends(current_user)):
-    """Same as one WebSocket message, without saving it. Handy for testing from /docs."""
-    fields = await load_form_fields(session, req.form_id) if req.form_id else []
-    out = await run_copilot({"user_message": req.message, "form": req.current_form, "fields": fields})
+async def chat(req: ChatRequest, session = Depends(get_db), user = Depends(current_user)):
+    """Same as one WebSocket message, minus the chat history row. Handy for testing from /docs.
+    The changed fields are saved, like over the socket."""
+    out = await fill_form_from_db(session, user.id, req.form_id, {"user_message": req.message})
+    await session.commit()
     return ChatResponse(**out)
 
 
@@ -193,7 +207,6 @@ async def chat(req: ChatRequest, session = Depends(get_db), _user = Depends(curr
 async def upload(
     file: UploadFile = File(...),
     form_id: int | None = Form(None),
-    current_form: str = Form("{}"),
     session = Depends(get_db),
     _user = Depends(current_user),
 ):
@@ -238,22 +251,14 @@ async def upload(
     }
 
     try:
-        form = json.loads(current_form)
-    except json.JSONDecodeError:
-        form = {}
-
-    try:
         text = await asyncio.to_thread(read_document_text, file_path, name)
         if not text.strip():
             response["error"] = "No readable text was found in this file."
             return response
 
-        fields = await load_form_fields(session, form_id) if form_id else []
-        out = await run_copilot({
+        out = await fill_form_from_db(session, _user.id, form_id, {
             "intent": "extract_document",
             "source_text": text,
-            "form": form if isinstance(form, dict) else {},
-            "fields": fields,
         })
         await session.execute(
             update(chatMessages).where(chatMessages.id == chat_id).values(agentResponse = out["reply"])

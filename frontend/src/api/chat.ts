@@ -39,11 +39,10 @@ export interface UploadResponse {
   error: string | null
 }
 
-/** Sent over the chat WebSocket */
+/** Sent over the chat WebSocket. The backend reads the form's current values from the database. */
 export interface SocketChatMessage {
   message: string
   form_id: number | null
-  current_form: RcaFormData
 }
 
 /** Received over the chat WebSocket: exactly one per message sent, in the same order */
@@ -55,12 +54,11 @@ export type SocketReply =
 /** GET /chat/getAllChats: every chat message of the logged-in user, oldest first */
 export const getAllChatsRequest = (): ApiRequest => ({ url: '/chat/getAllChats' })
 
-/** POST /chat/upload (multipart). The copilot fills `formId`'s fields from the file, starting from `currentForm`. */
-export const uploadFileRequest = (file: File, formId: number | null, currentForm: RcaFormData): ApiRequest<FormData> => {
+/** POST /chat/upload (multipart). The copilot fills `formId`'s saved values from the file. */
+export const uploadFileRequest = (file: File, formId: number | null): ApiRequest<FormData> => {
   const body = new FormData()
   body.append('file', file)
   if (formId !== null) body.append('form_id', String(formId))
-  body.append('current_form', JSON.stringify(currentForm))
   return { url: '/chat/upload', method: 'POST', body }
 }
 

@@ -1,7 +1,7 @@
 """SQLAlchemy tables. Flesh these out once the RCA form schema is final."""
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.database import Base
@@ -123,3 +123,20 @@ class chatMessages(BaseTables):
     agentResponse:Mapped[str | None] = mapped_column(String,nullable=True)
     user_id:Mapped[int] = mapped_column(Integer,ForeignKey("users.id",ondelete="CASCADE"))
     fileAttachmentsId:Mapped[int | None] = mapped_column(Integer,ForeignKey("fileAttachments.id",ondelete="CASCADE"),nullable=True, index=True)  # FK
+
+
+class FormValues(BaseTables):
+    """The current value of one form field for one user (their draft). Filled by the copilot or by hand."""
+    __tablename__ = "formvalues"
+    __table_args__ = (
+        # One value per user per field: saving again updates the same row
+        UniqueConstraint("user_id", "field_id", name="uq_formvalues_user_field"),
+        # Loading a user's draft of one form
+        Index("ix_formvalues_user_id_form_id", "user_id", "form_id"),
+    )
+
+    id:Mapped[int] = mapped_column(Integer,primary_key=True)
+    user_id:Mapped[int] = mapped_column(Integer,ForeignKey("users.id",ondelete="CASCADE"))
+    form_id:Mapped[int] = mapped_column(Integer,ForeignKey("formfields.id",ondelete="CASCADE"))
+    field_id:Mapped[int] = mapped_column(Integer,ForeignKey("fields.id",ondelete="CASCADE"))
+    value:Mapped[str | None] = mapped_column(Text,nullable=True)

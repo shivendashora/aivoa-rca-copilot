@@ -26,3 +26,15 @@ export interface FormsResponse {
 
 /** GET /forms: every form definition with its fields */
 export const formsRequest = (): ApiRequest => ({ url: '/forms' })
+
+/** The logged-in user's saved values, keyed by field name */
+export interface FormValuesResponse {
+  message: string
+  values: Record<string, string>
+}
+
+/** GET /forms/{id}/values: the saved draft, so the form survives a reload */
+export const formValuesRequest = (formId: number): ApiRequest => ({ url: `/forms/${formId}/values` })
+
+/** DELETE /forms/{id}/values: empty the draft to log a new complaint */
+export const clearValuesRequest = (formId: number): ApiRequest => ({ url: `/forms/${formId}/values`, method: 'DELETE' })

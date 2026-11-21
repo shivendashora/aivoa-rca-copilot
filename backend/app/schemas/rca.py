@@ -4,8 +4,7 @@ from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
     message: str
-    current_form: dict = {}
-    form_id: int | None = None  # which form's fields the copilot fills
+    form_id: int | None = None  # which form the copilot fills; its current values are read from the database
 
 
 class ChatResponse(BaseModel):

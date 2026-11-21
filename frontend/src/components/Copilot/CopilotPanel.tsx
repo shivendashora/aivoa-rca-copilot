@@ -7,6 +7,7 @@ import CommonButton from '../common/common-button'
 import { cn } from '../../lib/cn'
 import { tokenStorage } from '../../lib/tokenStorage'
 import { refreshAccessToken } from '../../api/client'
+import { flushFieldSaves } from '../../api/formDraft'
 import useAPICaller from '../common/hooks/useCallApi'
 import {
   getAllChatsRequest,
@@ -125,9 +126,8 @@ function Message({ m, isFirst }: { m: UiMessage; isFirst: boolean }) {
 
 export default function CopilotPanel() {
   const dispatch = useAppDispatch()
-  // The copilot fills this form, starting from the values already in it
+  // The copilot fills this form; the backend reads its current values from the database
   const formId = useAppSelector((s) => s.rca.definition?.id ?? null)
-  const currentForm = useAppSelector((s) => s.rca.form)
 
   const [messages, setMessages] = useState<UiMessage[]>([])
   const [status, setStatus] = useState<string>('connecting')
@@ -260,15 +260,27 @@ export default function CopilotPanel() {
 
   const connected = status === 'connected'
 
-  const submit = () => {
+  const submit = async () => {
     const value = text.trim()
-    const socket = wsref.current
-    if (!value || socket?.readyState !== WebSocket.OPEN) return
-    const payload: SocketChatMessage = { message: value, form_id: formId, current_form: currentForm }
-    socket.send(JSON.stringify(payload))
-    pendingIds.current.push(appendMessage({ role: 'user', text: value }))
-    setWaiting(pendingIds.current.length)
+    if (!value || wsref.current?.readyState !== WebSocket.OPEN) return
     setText('')
+    const id = appendMessage({ role: 'user', text: value })
+    pendingIds.current.push(id)
+    setWaiting(pendingIds.current.length)
+
+    // The copilot reads the saved form, so finish saving any field the user just typed in
+    await flushFieldSaves()
+
+    const socket = wsref.current
+    if (socket?.readyState !== WebSocket.OPEN) {
+      // Dropped while saving: this message will get no answer
+      pendingIds.current = pendingIds.current.filter((p) => p !== id)
+      setWaiting(pendingIds.current.length)
+      updateMessage(id, { failed: true })
+      return
+    }
+    const payload: SocketChatMessage = { message: value, form_id: formId }
+    socket.send(JSON.stringify(payload))
   }
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -276,7 +288,8 @@ export default function CopilotPanel() {
     e.target.value = ''
     if (!file) return
     const id = appendMessage({ role: 'user', text: file.name, file: true, uploading: true })
-    const res = await upload.callApi(uploadFileRequest(file, formId, currentForm))
+    await flushFieldSaves() // the copilot reads the saved form
+    const res = await upload.callApi(uploadFileRequest(file, formId))
     if (!res) {
       updateMessage(id, { uploading: false, failed: true })
       return

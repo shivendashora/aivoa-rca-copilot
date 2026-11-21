@@ -28,6 +28,12 @@ const rcaSlice = createSlice({
     setDefinition(state, action: PayloadAction<FormDefinition>) {
       state.definition = action.payload
     },
+    /** Values loaded from the database (no highlight: nothing just changed) */
+    setValues(state, action: PayloadAction<RcaFormData>) {
+      state.form = action.payload
+      state.changedFields = []
+      state.status = statusOf(state.form)
+    },
     applyAiUpdate(state, action: PayloadAction<Pick<AiUpdateResponse, 'form' | 'changed_fields'>>) {
       const { form, changed_fields = [] } = action.payload
       state.form = form ?? state.form
@@ -50,5 +56,5 @@ const rcaSlice = createSlice({
   },
 })
 
-export const { setDefinition, applyAiUpdate, setField, clearHighlights, resetForm } = rcaSlice.actions
+export const { setDefinition, setValues, applyAiUpdate, setField, clearHighlights, resetForm } = rcaSlice.actions
 export default rcaSlice.reducer
